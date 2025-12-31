@@ -2951,6 +2951,45 @@ void PhantomStyle::drawControl(ControlElement element,
   case CE_MenuVMargin:
   case CE_MenuEmptyArea:
     break;
+  case CE_PushButtonBevel: {
+    auto btn = qstyleoption_cast<const QStyleOptionButton*>(option);
+    if (!btn)
+      break;
+
+    if (btn->features & QStyleOptionButton::HasMenu) {
+      int menuButtonWidth = proxy()->pixelMetric(PM_MenuButtonIndicator, btn, widget) * 1.6;
+      QRect buttonRect = btn->rect;
+      QRect arrowRect = btn->rect;
+
+      if (btn->direction == Qt::RightToLeft) {
+        arrowRect.setRight(arrowRect.left() + menuButtonWidth);
+        buttonRect.setLeft(arrowRect.right());
+      } else {
+        arrowRect.setLeft(arrowRect.right() - menuButtonWidth);
+        buttonRect.setRight(arrowRect.left());
+      }
+
+      // Draw main button area
+      QStyleOptionButton btnOpt = *btn;
+      btnOpt.rect = buttonRect;
+      proxy()->drawPrimitive(PE_PanelButtonCommand, &btnOpt, painter, widget);
+
+      // Draw darker background for menu area
+      QStyleOptionButton arrowBtnOpt = *btn;
+      arrowBtnOpt.rect = arrowRect;
+      arrowBtnOpt.state |= State_Sunken; // Makes it darker
+      proxy()->drawPrimitive(PE_PanelButtonCommand, &arrowBtnOpt, painter, widget);
+
+      // Draw arrow
+      QStyleOption arrowOpt = *btn;
+      arrowOpt.rect = arrowRect;
+      proxy()->drawPrimitive(PE_IndicatorArrowDown, &arrowOpt, painter, widget);
+    } else {
+      // No menu - draw button background normally
+      proxy()->drawPrimitive(PE_PanelButtonCommand, btn, painter, widget);
+    }
+    break;
+  }
   case CE_PushButton: {
     auto btn = qstyleoption_cast<const QStyleOptionButton*>(option);
     if (!btn)
@@ -3016,7 +3055,7 @@ void PhantomStyle::drawControl(ControlElement element,
           proxy()->pixelMetric(PM_ButtonShiftVertical, option, widget));
     if (button->features & QStyleOptionButton::HasMenu) {
       int indicatorSize =
-          proxy()->pixelMetric(PM_MenuButtonIndicator, button, widget);
+          proxy()->pixelMetric(PM_MenuButtonIndicator, button, widget) * 1.6;
       if (button->direction == Qt::LeftToRight)
         textRect = textRect.adjusted(0, 0, -indicatorSize, 0);
       else
@@ -4433,6 +4472,12 @@ QSize PhantomStyle::sizeFromContents(ContentsType type,
     int hpad = (int)((qreal)fmheight *
                      Phantom::PushButton_HorizontalPaddingFontHeightRatio);
     newSize.rwidth() += hpad * 2;
+
+    // Add space for menu indicator if button has menu
+    if (pbopt->features & QStyleOptionButton::HasMenu) {
+      int menuButtonWidth = proxy()->pixelMetric(PM_MenuButtonIndicator, option, widget);
+      newSize.rwidth() += menuButtonWidth;
+    }
 #if QT_CONFIG(dialogbuttonbox)
     if (widget && qobject_cast<const QDialogButtonBox*>(widget->parent())) {
       int dialogButtonMinWidth = (int)Phantom::dpiScaled(80);
