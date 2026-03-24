@@ -111,16 +111,17 @@ enum {
   ComboBox_NonEditable_ContentsHPad = 4,
 };
 
-static const qreal TabBarTab_Rounding = 0.0;
-static const qreal SpinBox_Rounding = 0.0;
-static const qreal LineEdit_Rounding = 0.0;
-static const qreal FrameFocusRect_Rounding = 1.0;
-static const qreal PushButton_Rounding = 2.0;
-static const qreal ToolButton_Rounding = 1.25;
-static const qreal ProgressBar_Rounding = 0.0;
-static const qreal GroupBox_Rounding = 0.0;
-static const qreal SliderGroove_Rounding = 2.0;
-static const qreal SliderHandle_Rounding = 0.0;
+static const qreal TabBarTab_Rounding = 4.0;
+static const qreal SpinBox_Rounding = 4.0;
+static const qreal LineEdit_Rounding = 4.0;
+static const qreal FrameFocusRect_Rounding = 3.0;
+static const qreal PushButton_Rounding = 4.0;
+static const qreal ToolButton_Rounding = 4.0;
+static const qreal ProgressBar_Rounding = 3.0;
+static const qreal GroupBox_Rounding = 4.0;
+static const qreal SliderGroove_Rounding = 3.0;
+static const qreal SliderHandle_Rounding = 50.0;
+static const qreal CheckBox_Rounding = 3.0;
 
 static const qreal CheckMark_WidthOfHeightScale = 0.8;
 static const qreal PushButton_HorizontalPaddingFontHeightRatio = 1.0 / 2.0;
@@ -951,9 +952,6 @@ Q_NEVER_INLINE void drawDial(const QStyleOptionSlider* option,
   }
   painter->setPen(Dc::outlineOf(option->palette));
   painter->drawEllipse(br);
-  painter->setBrush(Qt::NoBrush);
-  painter->setPen(Dc::specularOf(buttonColor));
-  painter->drawEllipse(br.adjusted(1, 1, -1, -1));
   if (option->state & QStyle::State_HasFocus) {
     QColor highlight = pal.highlight().color();
     highlight.setHsv(highlight.hue(), qMin(160, highlight.saturation()),
@@ -1476,20 +1474,7 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
     break;
   }
   case PE_FrameDockWidget: {
-    painter->save();
-    QColor softshadow = option->palette.window().color().darker(120);
-    QRect r = option->rect;
-    painter->setPen(softshadow);
-    painter->drawRect(r.adjusted(0, 0, -1, -1));
-    painter->setPen(QPen(option->palette.light(), 1));
-    painter->drawLine(QPoint(r.left() + 1, r.top() + 1),
-                      QPoint(r.left() + 1, r.bottom() - 1));
-    painter->setPen(QPen(option->palette.window().color().darker(120)));
-    painter->drawLine(QPoint(r.left() + 1, r.bottom() - 1),
-                      QPoint(r.right() - 2, r.bottom() - 1));
-    painter->drawLine(QPoint(r.right() - 1, r.top() + 1),
-                      QPoint(r.right() - 1, r.bottom() - 1));
-    painter->restore();
+    Ph::fillRectOutline(painter, option->rect, 1, swatch.color(S_window_outline));
     break;
   }
   case PE_FrameGroupBox: {
@@ -1622,10 +1607,6 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
     }
     Ph::fillRectEdges(painter, option->rect, edge, 1,
                       swatch.color(S_window_outline));
-    // TODO need to check here if we're drawing with window or button color as
-    // the frame fill. Assuming window right now, but could be wrong.
-    Ph::fillRectEdges(painter, Ph::expandRect(option->rect, edge, -1), edge, 1,
-                      swatch.color(S_tabFrame_specular));
     break;
   }
 #endif // QT_CONFIG(tabbar)
@@ -1757,16 +1738,10 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
       Ph::fillRectEdges(painter, r, Qt::RightEdge, 1,
                         swatch.color(S_window_divider));
     } else {
-      // TODO replace with new code
       const int margin = 6;
-      const int offset = r.height() / 2;
-      painter->setPen(QPen(option->palette.window().color().darker(110)));
-      painter->drawLine(r.topLeft().x() + margin, r.topLeft().y() + offset,
-                        r.topRight().x() - margin, r.topRight().y() + offset);
-      painter->setPen(QPen(option->palette.window().color().lighter(110)));
-      painter->drawLine(r.topLeft().x() + margin, r.topLeft().y() + offset + 1,
-                        r.topRight().x() - margin,
-                        r.topRight().y() + offset + 1);
+      Ph::fillRectEdges(painter,
+                        QRect(r.x() + margin, r.y(), r.width() - margin * 2, r.height()),
+                        Qt::BottomEdge, 1, swatch.color(S_window_divider));
     }
     break;
   }
@@ -1778,14 +1753,10 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
     const qreal rounding = Ph::ToolButton_Rounding;
     Swatchy outline = S_window_outline;
     Swatchy fill = S_button;
-    Swatchy specular = S_button_specular;
     if (isDown) {
       fill = S_button_pressed;
-      specular = S_button_pressed_specular;
     } else if (isOn) {
-      // kinda repurposing this, hmm
       fill = S_scrollbarGutter;
-      specular = S_none;
     }
     if (hasFocus) {
       outline = S_highlight_outline;
@@ -1793,8 +1764,6 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
     QRect r = option->rect;
     Ph::PSave save(painter);
     Ph::paintBorderedRoundRect(painter, r, rounding, swatch, outline, fill);
-    Ph::paintBorderedRoundRect(painter, r.adjusted(1, 1, -1, -1), rounding,
-                               swatch, specular, S_none);
     break;
   }
   case PE_IndicatorDockWidgetResizeHandle: {
@@ -1866,15 +1835,12 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
       fgColor = S_highlightedText;
     }
     if (!isFlat) {
-      QRect fillR = r;
-      Ph::fillRectOutline(painter, fillR, 1, swatch.color(outlineColor));
-      fillR.adjust(1, 1, -1, -1);
-      if (Ph::IndicatorShadows && !isPressed && isEnabled) {
-        Ph::fillRectEdges(painter, fillR, Qt::TopEdge, 1,
-                          swatch.color(S_base_shadow));
-        fillR.adjust(0, 1, 0, 0);
-      }
-      painter->fillRect(fillR, swatch.color(bgFillColor));
+      Ph::PSave save(painter);
+      painter->setRenderHint(QPainter::Antialiasing);
+      QRectF fr = QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5);
+      painter->setBrush(swatch.color(bgFillColor));
+      painter->setPen(QPen(swatch.color(outlineColor), 1.0));
+      painter->drawRoundedRect(fr, Phantom::CheckBox_Rounding, Phantom::CheckBox_Rounding);
     }
     if (checkbox->state & State_NoChange) {
       const qreal insetScale = 0.7;
@@ -2082,14 +2048,10 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
     const qreal rounding = Ph::PushButton_Rounding;
     Swatchy outline = S_window_outline;
     Swatchy fill = S_button;
-    Swatchy specular = S_button_specular;
     if (isDown) {
       fill = S_button_pressed;
-      specular = S_button_pressed_specular;
     } else if (isOn) {
-      // kinda repurposing this, hmm
       fill = S_scrollbarGutter;
-      specular = S_button_pressed_specular;
     }
     if (hasFocus || isDefault) {
       outline = S_highlight_outline;
@@ -2097,8 +2059,6 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
     QRect r = option->rect;
     Ph::PSave save(painter);
     Ph::paintBorderedRoundRect(painter, r, rounding, swatch, outline, fill);
-    Ph::paintBorderedRoundRect(painter, r.adjusted(1, 1, -1, -1), rounding,
-                               swatch, specular, S_none);
     break;
   }
   case PE_FrameTabWidget: {
@@ -2110,7 +2070,6 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
       break;
     Ph::fillRectOutline(painter, option->rect, 1,
                         swatch.color(S_window_outline_dark_visible));
-    Ph::fillRectOutline(painter, bgRect, 1, swatch.color(S_tabFrame_specular));
 #endif // QT_CONFIG(tabwidget)
     break;
   }
@@ -2180,29 +2139,8 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
   case Phantom_PE_ScrollBarSliderVertical: {
     bool isLeftToRight = option->direction != Qt::RightToLeft;
     bool isSunken = option->state & State_Sunken;
-    Swatchy thumbFill, thumbSpecular;
-    if (isSunken) {
-      thumbFill = S_button_pressed;
-      thumbSpecular = S_button_pressed_specular;
-    } else {
-      thumbFill = S_button;
-      thumbSpecular = S_button_specular;
-    }
-    Qt::Edges edges;
-    QRect edgeRect = option->rect;
-    QRect mainRect = option->rect;
-    edgeRect.adjust(0, -1, 0, 1);
-    if (isLeftToRight) {
-      edges = Qt::LeftEdge | Qt::TopEdge | Qt::BottomEdge;
-      mainRect.setX(mainRect.x() + 1);
-    } else {
-      edges = Qt::TopEdge | Qt::BottomEdge | Qt::RightEdge;
-      mainRect.setWidth(mainRect.width() - 1);
-    }
-    Ph::fillRectEdges(painter, edgeRect, edges, 1,
-                      swatch.color(S_window_outline));
-    painter->fillRect(mainRect, swatch.color(thumbFill));
-    Ph::fillRectOutline(painter, mainRect, 1, swatch.color(thumbSpecular));
+    Swatchy thumbFill = isSunken ? S_button_pressed : S_button;
+    painter->fillRect(option->rect, swatch.color(thumbFill));
     break;
   }
   case Phantom_PE_WindowFrameColor: {
@@ -2336,9 +2274,7 @@ void PhantomStyle::drawControl(ControlElement element,
         if ((dir == Qt::LeftToRight && i > -j) ||
             (dir == Qt::RightToLeft && j > i)) {
           painter->fillRect(rcx + i, rcy + j, 2, 2,
-                            swatch.color(S_window_lighter));
-          painter->fillRect(rcx + i, rcy + j, 1, 1,
-                            swatch.color(S_window_darker));
+                            swatch.color(S_window_divider));
         }
       }
     }
@@ -2626,10 +2562,7 @@ void PhantomStyle::drawControl(ControlElement element,
     if (isIndeterminate || bar->progress > bar->minimum) {
       Ph::PSave save(painter);
       Ph::paintBorderedRoundRect(painter, filled, rounding, swatch,
-                                 S_progressBar_outline, S_progressBar);
-      Ph::paintBorderedRoundRect(painter, filled.adjusted(1, 1, -1, -1),
-                                 rounding, swatch, S_progressBar_specular,
-                                 S_none);
+                                 S_none, S_progressBar);
       if (isIndeterminate) {
         // TODO paint indeterminate indicator
 #if QT_CONFIG(animation)
@@ -3132,35 +3065,25 @@ void PhantomStyle::drawControl(ControlElement element,
     painter->setClipRect(shapeClipRect);
     bool hasFrame =
         tab->features & QStyleOptionTab::HasFrame && !tab->documentMode;
-    Swatchy tabFrameColor, thisFillColor, specular;
+    Swatchy tabFrameColor, thisFillColor;
     if (hasFrame) {
       tabFrameColor = S_tabFrame;
       if (isSelected) {
         thisFillColor = S_tabFrame;
-        specular = S_tabFrame_specular;
       } else {
         thisFillColor = S_inactiveTabYesFrame;
-        specular = Ph::TabBar_InactiveTabsHaveSpecular
-                       ? S_inactiveTabYesFrame_specular
-                       : S_none;
       }
     } else {
       tabFrameColor = S_window;
       if (isSelected) {
         thisFillColor = S_window;
-        specular = S_window_specular;
       } else {
         thisFillColor = S_inactiveTabNoFrame;
-        specular = Ph::TabBar_InactiveTabsHaveSpecular
-                       ? S_inactiveTabNoFrame_specular
-                       : S_none;
       }
     }
     auto frameColor = isSelected ? S_window_outline_dark_visible : S_window_outline;
     Ph::paintBorderedRoundRect(painter, drawRect, rounding, swatch,
                                frameColor, thisFillColor);
-    Ph::paintBorderedRoundRect(painter, drawRect.adjusted(1, 1, -1, -1),
-                               rounding, swatch, specular, S_none);
     painter->restore();
     if (isSelected) {
       QRect highlightRect = Ph::expandRect(option->rect, outerEdge, -2);
@@ -3177,9 +3100,6 @@ void PhantomStyle::drawControl(ControlElement element,
       refillRect =
           Ph::expandRect(refillRect, edgeAwayNextTab | edgeTowardNextTab, -1);
       painter->fillRect(refillRect, swatch.color(tabFrameColor));
-      Ph::fillRectEdges(painter, refillRect,
-                        edgeAwayNextTab | edgeTowardNextTab, 1,
-                        swatch.color(specular));
     }
     break;
   }
@@ -3267,56 +3187,88 @@ void PhantomStyle::drawComplexControl(ComplexControl control,
     auto groupBox = qstyleoption_cast<const QStyleOptionGroupBox*>(option);
     if (!groupBox)
       break;
-    painter->save();
-    // Draw frame
     QRect textRect =
         proxy()->subControlRect(CC_GroupBox, option, SC_GroupBoxLabel, widget);
     QRect checkBoxRect = proxy()->subControlRect(CC_GroupBox, option,
                                                  SC_GroupBoxCheckBox, widget);
+    QRect frameRect = proxy()->subControlRect(CC_GroupBox, option,
+                                              SC_GroupBoxFrame, widget);
+    bool hasLabel = (groupBox->subControls & QStyle::SC_GroupBoxLabel) &&
+                    !groupBox->text.isEmpty();
+    bool hasCheckBox = groupBox->subControls & SC_GroupBoxCheckBox;
+    bool hasTitleArea = hasLabel || hasCheckBox;
 
     if (groupBox->subControls & QStyle::SC_GroupBoxFrame) {
-      QStyleOptionFrame frame;
-      frame.QStyleOption::operator=(*groupBox);
-      frame.features = groupBox->features;
-      frame.lineWidth = groupBox->lineWidth;
-      frame.midLineWidth = groupBox->midLineWidth;
-      frame.rect = proxy()->subControlRect(CC_GroupBox, option,
-                                           SC_GroupBoxFrame, widget);
-      proxy()->drawPrimitive(PE_FrameGroupBox, &frame, painter, widget);
+      Ph::PSave save(painter);
+      painter->setRenderHint(QPainter::Antialiasing);
+      const QRectF outerF =
+          QRectF(option->rect).adjusted(0.5, 0.5, -0.5, -0.5);
+
+      // Outer border around the full GroupBox (title + body)
+      painter->setBrush(Qt::NoBrush);
+      painter->setPen(swatch.pen(S_window_divider));
+      painter->drawRoundedRect(outerF, Ph::GroupBox_Rounding,
+                               Ph::GroupBox_Rounding);
+
+      // QStyleSheetStyle may strip SC_GroupBoxLabel from subControls before
+      // calling us, so detect title presence from text content instead.
+      const bool hasTitleGeometry = hasTitleArea || !groupBox->text.isEmpty();
+      if (hasTitleGeometry) {
+        // Compute title height from font metrics (frameRect.top() is unreliable
+        // when SC_GroupBoxLabel has been stripped from subControls mask)
+        const int fh = option->fontMetrics.height();
+        const int topH =
+            qMax(pixelMetric(PM_ExclusiveIndicatorHeight), fh) +
+            (int)((qreal)fh * Ph::GroupBox_LabelBottomMarginFontRatio);
+
+        QRect titleStrip(option->rect.left(), option->rect.top(),
+                         option->rect.width(), topH);
+
+        QColor titleFill = QColor(200, 0, 0); // DEBUG: hardcoded red
+        painter->setClipRect(titleStrip);
+        painter->setBrush(titleFill);
+        painter->setPen(Qt::NoPen);
+        painter->drawRoundedRect(outerF, Ph::GroupBox_Rounding,
+                                 Ph::GroupBox_Rounding);
+        painter->setClipping(false);
+
+        // Separator between title strip and body
+        painter->setRenderHint(QPainter::Antialiasing, false);
+        painter->setPen(swatch.pen(S_window_divider));
+        painter->drawLine(option->rect.left() + 1, option->rect.top() + topH,
+                          option->rect.right() - 1, option->rect.top() + topH);
+      }
     }
 
-    // Draw title
-    if ((groupBox->subControls & QStyle::SC_GroupBoxLabel) &&
-        !groupBox->text.isEmpty()) {
-      // groupBox->textColor gets the incorrect palette here
+    // Draw title text across the full width
+    if (hasLabel) {
       painter->setPen(QPen(option->palette.windowText(), 1));
       int alignment = int(groupBox->textAlignment);
       if (!proxy()->styleHint(QStyle::SH_UnderlineShortcut, option, widget))
         alignment |= Qt::TextHideMnemonic;
-
-      proxy()->drawItemText(painter, textRect,
-                            // int cast to suppress clang analyzer warning
+      QRect fullTextRect = textRect;
+      fullTextRect.setLeft(option->rect.left() + 8);
+      fullTextRect.setRight(option->rect.right() - 8);
+      proxy()->drawItemText(painter, fullTextRect,
                             (int)Qt::TextShowMnemonic | (int)Qt::AlignLeft |
                                 alignment,
                             groupBox->palette, groupBox->state & State_Enabled,
                             groupBox->text, QPalette::NoRole);
-
       if (groupBox->state & State_HasFocus) {
         QStyleOptionFocusRect fropt;
         fropt.QStyleOption::operator=(*groupBox);
-        fropt.rect = textRect.adjusted(-1, 0, 1, 0);
+        fropt.rect = fullTextRect.adjusted(-1, 0, 1, 0);
         proxy()->drawPrimitive(PE_FrameFocusRect, &fropt, painter, widget);
       }
     }
 
     // Draw checkbox
-    if (groupBox->subControls & SC_GroupBoxCheckBox) {
+    if (hasCheckBox) {
       QStyleOptionButton box;
       box.QStyleOption::operator=(*groupBox);
       box.rect = checkBoxRect;
       proxy()->drawPrimitive(PE_IndicatorCheckBox, &box, painter, widget);
     }
-    painter->restore();
     break;
   }
 #if QT_CONFIG(spinbox)
@@ -3852,10 +3804,6 @@ void PhantomStyle::drawComplexControl(ComplexControl control,
         Swatchy color = hasFocus ? S_highlight_outline : S_window_outline_dark_visible;
         br.adjust(0, 1, 0, -1);
         Ph::fillRectEdges(painter, br, edge, 1, swatch.color(color));
-        br.adjust(1, 0, -1, 0);
-        Swatchy specular =
-            isSunken ? S_button_pressed_specular : S_button_specular;
-        Ph::fillRectOutline(painter, br, 1, swatch.color(specular));
       }
     } else {
       QStyleOptionButton buttonOption;
@@ -3906,9 +3854,6 @@ void PhantomStyle::drawComplexControl(ComplexControl control,
         option->state & State_KeyboardFocusChange)
       outlineColor = S_highlight_outline;
     if ((option->subControls & SC_SliderGroove) && groove.isValid()) {
-      QRect g0 = groove;
-      if (g0.height() > 5)
-        g0.adjust(0, 1, 0, -1);
       Ph::PSave saver(painter);
       Swatchy gutterColor =
           option->state & State_Enabled ? S_scrollbarGutter : S_window;
@@ -3981,26 +3926,17 @@ void PhantomStyle::drawComplexControl(ComplexControl control,
       bool isPressed = option->state & QStyle::State_Sunken &&
                        option->activeSubControls & SC_SliderHandle;
       QRect r = handle;
-      Swatchy handleOutline, handleFill, handleSpecular;
+      Swatchy handleOutline, handleFill;
       if (option->state & State_HasFocus &&
           option->state & State_KeyboardFocusChange) {
         handleOutline = S_highlight_outline;
       } else {
         handleOutline = S_window_outline;
       }
-      if (isPressed) {
-        handleFill = S_button_pressed;
-        handleSpecular = S_button_pressed_specular;
-      } else {
-        handleFill = S_button;
-        handleSpecular = S_button_specular;
-      }
+      handleFill = isPressed ? S_highlight : S_button;
       Ph::PSave save(painter);
       Ph::paintBorderedRoundRect(painter, r, Ph::SliderHandle_Rounding, swatch,
                                  handleOutline, handleFill);
-      r.adjust(1, 1, -1, -1);
-      Ph::paintBorderedRoundRect(painter, r, Ph::SliderHandle_Rounding, swatch,
-                                 handleSpecular, S_none);
     }
     break;
   }
@@ -4787,12 +4723,13 @@ QRect PhantomStyle::subControlRect(ComplexControl control,
           y = (textHeight - indicatorHeight) / 2;
         }
       } else {
-        w = contentWidth;
-        h = textHeight;
-        if (option->subControls & QStyle::SC_GroupBoxCheckBox) {
-          x += indicatorWidth + indicatorRightSpace;
-          w -= indicatorWidth + indicatorRightSpace;
-        }
+        // Full-width title strip so QGroupBox::title stylesheet fills edge to edge
+        int topMargin = qMax(pixelMetric(PM_ExclusiveIndicatorHeight), textHeight) +
+                        (int)((qreal)textHeight * Ph::GroupBox_LabelBottomMarginFontRatio);
+        x = 0;
+        y = 0;
+        w = option->rect.width();
+        h = topMargin;
       }
       return visualRect(option->direction, option->rect, QRect(x, y, w, h));
     }
