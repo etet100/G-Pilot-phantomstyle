@@ -1522,6 +1522,15 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
       QColor titleFill;
       if (hasTitleArea) {
         if (widget) {
+          QVariant prop = widget->property("_ph_titleBgColor");
+          if (prop.isValid() && prop.canConvert<QColor>()) {
+            QColor c = prop.value<QColor>();
+            if (c.isValid()) {
+              titleFill = c;
+            }
+          }
+        }
+        if (!titleFill.isValid() && widget) {
           QVariant prop = widget->property("titleBackgroundColor");
           if (prop.isValid() && prop.canConvert<QColor>()) {
             QColor c = prop.value<QColor>();
@@ -3321,15 +3330,30 @@ void PhantomStyle::drawComplexControl(ComplexControl control,
         // Compute title height from font metrics (frameRect.top() is unreliable
         // when SC_GroupBoxLabel has been stripped from subControls mask)
         const int fh = option->fontMetrics.height();
-        const int topH =
+        int topH =
             qMax(pixelMetric(PM_ExclusiveIndicatorHeight), fh) +
             (int)((qreal)fh * Ph::GroupBox_LabelBottomMarginFontRatio);
+        if (widget) {
+          QVariant cached = widget->property("_ph_titleHeight");
+          if (cached.isValid()) {
+            topH = qMax(topH, cached.toInt());
+          }
+        }
 
         QRect titleStrip(option->rect.left(), option->rect.top(),
                          option->rect.width(), topH);
 
         QColor titleFill = swatch.color(S_window_darker);
         if (widget) {
+          QVariant prop = widget->property("_ph_titleBgColor");
+          if (prop.isValid() && prop.canConvert<QColor>()) {
+            QColor c = prop.value<QColor>();
+            if (c.isValid()) {
+              titleFill = c;
+            }
+          }
+        }
+        if (!titleFill.isValid() && widget) {
           QVariant prop = widget->property("titleBackgroundColor");
           if (prop.isValid() && prop.canConvert<QColor>()) {
             QColor c = prop.value<QColor>();
@@ -4628,6 +4652,47 @@ static int groupBoxTitleVerticalPadding(const QWidget* widget) {
     }
     return topPad + botPad;
 }
+
+// Parses QGroupBox::title custom background color from active stylesheets.
+// Use only custom keys here to avoid QStyleSheetStyle drawing an extra
+// background under the title text:
+//   QGroupBox::title { -ph-title-background: #334455; }
+//   QGroupBox::title { ph-title-background: rgba(10,20,30,120); }
+static QColor groupBoxTitleBackgroundColor(const QWidget* widget) {
+    QString ss = qApp ? qApp->styleSheet() : QString();
+    if (widget && !widget->styleSheet().isEmpty()) {
+      ss += QLatin1Char('\n') + widget->styleSheet();
+    }
+    if (ss.isEmpty()) {
+
+      return QColor();
+    }
+
+    static const QRegularExpression ruleRe(
+      QStringLiteral(R"(QGroupBox\s*::\s*title\b[^{]*\{([^}]*)\})"),
+      QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression bgColorRe(
+      QStringLiteral(R"(\b(?:-ph-title-background|ph-title-background)\s*:\s*([^;]+))"),
+      QRegularExpression::CaseInsensitiveOption);
+
+    QColor resolved;
+    auto it = ruleRe.globalMatch(ss);
+    while (it.hasNext()) {
+      const QString block = it.next().captured(1);
+
+      auto bcm = bgColorRe.match(block);
+      if (bcm.hasMatch()) {
+        QString raw = bcm.captured(1).trimmed();
+        raw.remove(QStringLiteral("!important"));
+        QColor c(raw.trimmed());
+        if (c.isValid()) {
+          resolved = c;
+        }
+      }
+    }
+
+    return resolved;
+}
 #endif
 
 void PhantomStyle::polish(QApplication* app) { QCommonStyle::polish(app); }
@@ -4685,7 +4750,9 @@ void PhantomStyle::polish(QWidget* widget) {
     QRect labelRect =
         proxy()->subControlRect(CC_GroupBox, &opt, SC_GroupBoxLabel, gb);
     int titleHeight = labelRect.height() + groupBoxTitleVerticalPadding(gb);
+    QColor titleBg = groupBoxTitleBackgroundColor(gb);
     gb->setProperty("_ph_titleHeight", titleHeight);
+    gb->setProperty("_ph_titleBgColor", titleBg);
   }
 #endif
 
