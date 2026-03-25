@@ -1,6 +1,7 @@
 #include "phantomstyle.h"
 #include "phantomcolor.h"
 #include "phantomtweak.h"
+#include <QRegularExpression>
 #include <QtCore/qmath.h>
 #include <QtCore/qpoint.h>
 #include <QtCore/qshareddata.h>
@@ -1492,8 +1493,111 @@ void PhantomStyle::drawPrimitive(PrimitiveElement elem,
       Ph::fillRectEdges(painter, frame, Qt::TopEdge, 1,
                         swatch.color(S_window_divider));
     } else {
-      Ph::paintBorderedRoundRect(painter, frame, Ph::GroupBox_Rounding, swatch,
-                                 S_window_divider, S_none);
+      // Two independent properties:
+      // - "titleInFrame" (bool): when true, border wraps the full widget
+      //   (card style); default false = border around body only (classic style)
+      // - "titleBackgroundColor" (QColor): when set, fills the title area with
+      //   a colored strip regardless of titleInFrame
+      const bool titleInFrame =
+          widget && widget->property("titleInFrame").toBool();
+
+      // The CSS-adjusted title height is cached by polish() since proxy() calls
+      // during drawing are blocked by QStyleSheetStyle's global recursion guard.
+      // Read _ph_titleHeight to correctly handle QGroupBox::title { padding }.
+      int frameTop = frame.top();
+      if (widget && frame.top() > widget->rect().top()) {
+        QVariant cached = widget->property("_ph_titleHeight");
+        if (cached.isValid()) {
+          int cssTop = widget->rect().top() + cached.toInt();
+          if (cssTop > frameTop) {
+            frameTop = cssTop;
+          }
+        }
+      }
+
+      const bool hasTitleArea =
+          widget && (frameTop > widget->rect().top());
+
+      // Resolve title fill color (valid only when hasTitleArea)
+      QColor titleFill;
+      if (hasTitleArea) {
+        if (widget) {
+          QVariant prop = widget->property("titleBackgroundColor");
+          if (prop.isValid() && prop.canConvert<QColor>()) {
+            QColor c = prop.value<QColor>();
+            if (c.isValid()) {
+              titleFill = c;
+            }
+          }
+        }
+        if (!titleFill.isValid() && titleInFrame) {
+          titleFill = swatch.color(S_window_darker);
+        }
+      }
+      const bool hasTitleStrip = titleFill.isValid();
+
+      // Adjusted body frame rect using CSS-corrected top
+      const QRect adjustedFrame =
+          frame.top() != frameTop
+              ? QRect(frame.left(), frameTop, frame.width(),
+                      frame.height() - (frameTop - frame.top()))
+              : frame;
+
+      // Border rect: full widget in card style, body only otherwise
+      const QRect borderRect =
+          (titleInFrame && hasTitleArea) ? widget->rect() : adjustedFrame;
+
+      painter->setRenderHint(QPainter::Antialiasing);
+
+      if (hasTitleStrip) {
+        const QRect titleStrip(widget->rect().left(), widget->rect().top(),
+                               widget->rect().width(),
+                               frameTop - widget->rect().top());
+        painter->setBrush(titleFill);
+        painter->setPen(Qt::NoPen);
+        // Clip the full-widget rounded rect to the title strip area so the top
+        // corners round naturally. The bottom edge is straight (clipped).
+        const QRectF titleF =
+            QRectF(widget->rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        painter->setClipRect(titleStrip);
+        painter->drawRoundedRect(titleF, Ph::GroupBox_Rounding,
+                                 Ph::GroupBox_Rounding);
+        painter->setClipping(false);
+      }
+
+      // Outer border
+      const QRectF outerF = QRectF(borderRect).adjusted(0.5, 0.5, -0.5, -0.5);
+      painter->setBrush(Qt::NoBrush);
+      painter->setPen(swatch.pen(S_window_divider));
+      if (hasTitleStrip && !titleInFrame) {
+        // Standalone title strip: body frame has straight top corners and
+        // rounded bottom corners so it meets the title strip seamlessly.
+        const qreal r = Ph::GroupBox_Rounding;
+        QPainterPath path;
+        path.moveTo(outerF.topLeft());
+        path.lineTo(outerF.topRight());
+        path.lineTo(QPointF(outerF.right(), outerF.bottom() - r));
+        path.arcTo(QRectF(outerF.right() - 2 * r, outerF.bottom() - 2 * r,
+                          2 * r, 2 * r),
+                   0, -90);
+        path.lineTo(QPointF(outerF.left() + r, outerF.bottom()));
+        path.arcTo(
+            QRectF(outerF.left(), outerF.bottom() - 2 * r, 2 * r, 2 * r),
+            270, -90);
+        path.closeSubpath();
+        painter->drawPath(path);
+      } else {
+        painter->drawRoundedRect(outerF, Ph::GroupBox_Rounding,
+                                 Ph::GroupBox_Rounding);
+      }
+
+      // Separator only in card style (when border encloses the title)
+      if (titleInFrame && hasTitleArea) {
+        painter->setRenderHint(QPainter::Antialiasing, false);
+        painter->setPen(swatch.pen(S_window_divider));
+        painter->drawLine(widget->rect().left() + 1, frameTop,
+                          widget->rect().right() - 1, frameTop);
+      }
     }
     break;
   }
@@ -3224,7 +3328,16 @@ void PhantomStyle::drawComplexControl(ComplexControl control,
         QRect titleStrip(option->rect.left(), option->rect.top(),
                          option->rect.width(), topH);
 
-        QColor titleFill = QColor(200, 0, 0); // DEBUG: hardcoded red
+        QColor titleFill = swatch.color(S_window_darker);
+        if (widget) {
+          QVariant prop = widget->property("titleBackgroundColor");
+          if (prop.isValid() && prop.canConvert<QColor>()) {
+            QColor c = prop.value<QColor>();
+            if (c.isValid()) {
+              titleFill = c;
+            }
+          }
+        }
         painter->setClipRect(titleStrip);
         painter->setBrush(titleFill);
         painter->setPen(Qt::NoPen);
@@ -4465,6 +4578,58 @@ QSize PhantomStyle::sizeFromContents(ContentsType type,
   return newSize;
 }
 
+#if QT_CONFIG(groupbox)
+// Parses QGroupBox::title { padding } from the active stylesheets and returns
+// top + bottom padding in pixels. QStyleSheetStyle applies ::title padding only
+// to text rendering — it does NOT propagate it through any QStyle geometry API —
+// so we must read it directly to correctly size the title strip.
+static int groupBoxTitleVerticalPadding(const QWidget* widget) {
+    QString ss = qApp ? qApp->styleSheet() : QString();
+    if (widget && !widget->styleSheet().isEmpty()) {
+        ss += QLatin1Char('\n') + widget->styleSheet();
+    }
+    if (ss.isEmpty()) {
+        return 0;
+    }
+
+    static const QRegularExpression ruleRe(
+        QStringLiteral(R"(QGroupBox\s*::\s*title\b[^{]*\{([^}]*)\})"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression shortRe(
+        QStringLiteral(R"(\bpadding\s*:\s*(\d+)(?:px)?(?:\s+(\d+)(?:px)?)?(?:\s+(\d+)(?:px)?)?(?:\s+(\d+)(?:px)?)?)"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression topRe(
+        QStringLiteral(R"(\bpadding-top\s*:\s*(\d+)(?:px)?)"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression botRe(
+        QStringLiteral(R"(\bpadding-bottom\s*:\s*(\d+)(?:px)?)"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    int topPad = 0, botPad = 0;
+    auto it = ruleRe.globalMatch(ss);
+    while (it.hasNext()) {
+        const QString block = it.next().captured(1);
+
+        // padding: T  |  T LR  |  T R B  |  T R B L
+        auto sm = shortRe.match(block);
+        if (sm.hasMatch()) {
+            topPad = sm.captured(1).toInt();
+            botPad = sm.captured(3).isEmpty() ? topPad : sm.captured(3).toInt();
+        }
+        // padding-top / padding-bottom override shorthand (last rule wins)
+        auto tm = topRe.match(block);
+        if (tm.hasMatch()) {
+            topPad = tm.captured(1).toInt();
+        }
+        auto bm = botRe.match(block);
+        if (bm.hasMatch()) {
+            botPad = bm.captured(1).toInt();
+        }
+    }
+    return topPad + botPad;
+}
+#endif
+
 void PhantomStyle::polish(QApplication* app) { QCommonStyle::polish(app); }
 
 void PhantomStyle::polish(QWidget* widget) {
@@ -4497,6 +4662,30 @@ void PhantomStyle::polish(QWidget* widget) {
       (widget->inherits("QDockWidgetSeparator"))) {
     widget->setAttribute(Qt::WA_Hover, true);
     widget->setAttribute(Qt::WA_OpaquePaintEvent, false);
+  }
+#endif
+
+#if QT_CONFIG(groupbox)
+  if (auto gb = qobject_cast<QGroupBox*>(widget)) {
+    // Compute title strip height = base label height + CSS ::title padding.
+    // The proxy()->subControlRect() call here is NOT blocked by QStyleSheetStyle's
+    // recursion guard (polish() is exempt), but the guard prevents CSS padding
+    // from being reflected through subControlRect anyway — so we parse it directly.
+    QStyleOptionGroupBox opt;
+    opt.initFrom(gb);
+    opt.text = gb->title();
+    opt.lineWidth = 1;
+    opt.midLineWidth = 0;
+    opt.textAlignment = gb->alignment();
+    opt.subControls = SC_GroupBoxFrame | SC_GroupBoxLabel;
+    if (gb->isCheckable()) {
+      opt.subControls |= SC_GroupBoxCheckBox;
+    }
+    opt.features = gb->isFlat() ? QStyleOptionFrame::Flat : QStyleOptionFrame::None;
+    QRect labelRect =
+        proxy()->subControlRect(CC_GroupBox, &opt, SC_GroupBoxLabel, gb);
+    int titleHeight = labelRect.height() + groupBoxTitleVerticalPadding(gb);
+    gb->setProperty("_ph_titleHeight", titleHeight);
   }
 #endif
 
@@ -4674,6 +4863,23 @@ QRect PhantomStyle::subControlRect(ComplexControl control,
             qMax(pixelMetric(PM_ExclusiveIndicatorHeight), fontHeight);
         topMargin +=
             (int)((qreal)fontHeight * Ph::GroupBox_LabelBottomMarginFontRatio);
+        // Use the CSS-adjusted title height cached by polish() — proxy() calls
+        // here are blocked by QStyleSheetStyle's global recursion guard, so
+        // subControlRect(SC_GroupBoxLabel) would not include CSS padding.
+        if (widget) {
+          QVariant cached = widget->property("_ph_titleHeight");
+          if (cached.isValid()) {
+            topMargin = qMax(topMargin, cached.toInt());
+          } else {
+            QRect labelRect = proxy()->subControlRect(
+                CC_GroupBox, option, SC_GroupBoxLabel, widget);
+            topMargin = qMax(topMargin, labelRect.height());
+          }
+        } else {
+          QRect labelRect = proxy()->subControlRect(
+              CC_GroupBox, option, SC_GroupBoxLabel, widget);
+          topMargin = qMax(topMargin, labelRect.height());
+        }
         r.setTop(r.top() + topMargin);
       }
       if (subControl == SC_GroupBoxContents &&
